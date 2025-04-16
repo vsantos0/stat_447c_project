@@ -3,3 +3,43 @@ title: "report"
 output: html_document
 ---
 
+```{r}
+suppressPackageStartupMessages(suppressWarnings(library(repr)))
+suppressPackageStartupMessages(suppressWarnings(library(tidyverse)))
+```
+
+Need to filter out rows where any of the questions has grade greater than 7 (filter for data after and including 1979).
+Need to filter out award values that are neither of gold, silver, bronze, honourbale mention, or NA (no award).
+
+```{r}
+url <- 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-09-24/individual_results_df.csv'
+individual_results_df <- read_csv(url, col_types=cols(p7=col_double())) |>
+    select(-p7, -total, -individual_rank)
+
+# head(individual_results_df)
+# nrow(individual_results_df)
+# unique(individual_results_df$award)
+# filter(individual_results_df, award == "Special prize")
+individual_results_tidy <- individual_results_df |>
+  filter(year >= 1979) |>
+  filter(!if_any(p1:p6, is.na)) |>
+  filter(award == "Gold medal" | award == "Silver medal" |
+         award == "Bronze medal" | award == "Honourable mention" |
+         is.na(award))
+```
+
+```{r}
+nrow(individual_results_tidy)
+unique(individual_results_tidy$award)
+```
+```{r}
+ggplot(individual_results_tidy, aes(x = p1)) +
+  geom_histogram(binwidth = 1) +
+  scale_x_continuous(breaks = 0:7)
+```
+```{r}
+ggplot(individual_results_tidy, aes(x = award)) +
+  geom_histogram(binwidth = 1)
+```
+
+
