@@ -38,8 +38,158 @@ ggplot(individual_results_tidy, aes(x = p1)) +
   scale_x_continuous(breaks = 0:7)
 ```
 ```{r}
-ggplot(individual_results_tidy, aes(x = award)) +
-  geom_histogram(binwidth = 1)
+url <- 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-09-24/country_results_df.csv'
+country_results_df <- read_csv(url, col_types=cols(p7=col_double())) |> 
+    select(year, country, p1:p6, awards_gold, awards_silver, awards_bronze)
+
+head(country_results_df)
 ```
+```{r}
+nrow(country_results_df)
+length(unique(country_results_df$country))
+max(country_results_df$p1, na.rm=TRUE)
+```
+```{r}
+country_results_df |> filter(is.na(awards_gold))
+```
+```{r}
+country_results_df |> mutate(total = awards_gold + awards_silver + awards_bronze) |>
+  filter(total > 6)
+```
+```{r}
+country_results_df |>
+  filter(year >= 1983 & !is.na(awards_gold) & !is.na(awards_silver) & !is.na(awards_bronze)) |>
+  mutate(total_awards = awards_gold + awards_silver + awards_bronze) |>
+  filter(country == "Brazil")
+```
+
+
+```{r}
+country_results_tidy <- country_results_df |>
+  filter(year >= 1983 & !is.na(awards_gold) & !is.na(awards_silver) & !is.na(awards_bronze)) |>
+  mutate(total_awards = awards_gold + awards_silver + awards_bronze) |>
+  select(year, country, total_awards) |>
+  arrange(year)
+
+country_results_tidy
+```
+```{r}
+brazil_results <- country_results_tidy |> filter(country == "Brazil")
+brazil_results
+```
+```{r}
+ggplot(data = brazil_results, aes(x = year, y = total_awards)) +
+  geom_point()
+```
+```{r}
+suppressPackageStartupMessages(require(rstan))
+brazil_simple_predict <- stan_model("./brazil_simple_model.stan")
+```
+
+```{r}
+fit = sampling(
+  brazil_simple_predict,
+  data = list(N = nrow(brazil_results), y = brazil_results$total_awards),
+  chains = 1,
+  iter = 10000,
+  seed = 123
+)
+```
+```{r}
+print(fit)
+```
+```{r}
+ci_limits <- data.frame(lower = numeric(), upper = numeric())
+ci_limits <- rbind(ci_limits, data.frame(lower = 0, upper = 0)) # Dummy first row
+
+for (i in 2:nrow(brazil_results)) {
+  N_train = i - 1
+  if (N_train == 1) {
+    ys = array(brazil_results$total_awards[1:N_train], dim = 1)
+  } else {
+    ys = brazil_results$total_awards[1:N_train]
+  }
+  
+  train_test_data = list(
+      N = N_train,
+      y = ys
+  )
+  
+  fit = sampling(
+    brazil_simple_predict,
+    data = train_test_data,
+    chains = 1,
+    iter = 10000,
+    refresh = 0, # To suppress running messages
+    seed = 123
+  )
+  
+  y_pred_samples = extract(fit, pars="y_predict")$y_predict
+  limits = unname(quantile(y_pred_samples, probs = c(0.1, 0.9)))
+  
+  ci_limits <- rbind(ci_limits, data.frame(lower = limits[1], upper = limits[2]))
+}
+```
+
+```{r}
+merged_df = brazil_results |> 
+  bind_cols(data.frame(CI_L = ci_limits[,1], CI_R = ci_limits[,2])) %>% 
+  mutate(Inside_CI = (total_awards >= CI_L & total_awards <= CI_R)) 
+
+merged_df[-1, ] %>% 
+  ggplot(aes(x = year, y = total_awards, ymin = CI_L, ymax = CI_R, color=Inside_CI)) +
+  geom_point() + 
+  geom_errorbar() +
+  theme_minimal() +
+  labs(x = "Year", y = "Total Awards")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+suppressPackageStartupMessages(require(bayesplot))
+```
+
+```{r}
+mcmc_trace(fit, pars = c("intercept")) + theme_minimal()
+```
+
+```{r}
+mcmc_rank_hist(fit, pars = c("intercept")) + theme_minimal()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
