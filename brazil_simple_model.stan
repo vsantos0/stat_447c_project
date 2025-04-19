@@ -22,4 +22,10 @@ generated quantities {
   int<lower=0, upper=6> y_predict;
   theta_predict = inv_logit(slope * ((1.0 + N) / N) + intercept);
   y_predict = binomial_rng(6, theta_predict);
+  
+  array[N] int<lower=0, upper=6> y_rep;
+  for (i in 1:N) {
+    real theta = inv_logit(slope * (i / N) + intercept);
+    y_rep[i] = binomial_rng(6, theta);
+  }
 }
