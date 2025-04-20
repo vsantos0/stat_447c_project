@@ -49,9 +49,15 @@ brazil_results <- country_results_tidy |> filter(country == "Brazil")
 brazil_results
 ```
 ```{r}
-ggplot(data = brazil_results, aes(x = year, y = total_awards)) +
+brazil_results |> select(-country)
+```
+
+```{r}
+data_plot = ggplot(data = brazil_results, aes(x = year, y = total_awards)) +
   geom_point() +
+  labs(x = "Year", y = "Total Awards") + 
   theme_minimal()
+data_plot
 ```
 ```{r}
 suppressPackageStartupMessages(require(rstan))
@@ -108,12 +114,13 @@ merged_df = brazil_results |>
   bind_cols(data.frame(CI_L = ci_limits[,1], CI_R = ci_limits[,2])) %>% 
   mutate(Inside_CI = (total_awards >= CI_L & total_awards <= CI_R)) 
 
-merged_df[-1, ] %>% 
+simple_cv = merged_df[-1, ] %>% 
   ggplot(aes(x = year, y = total_awards, ymin = CI_L, ymax = CI_R, color=Inside_CI)) +
   geom_point() + 
   geom_errorbar() +
   theme_minimal() +
   labs(x = "Year", y = "Total Awards")
+simple_cv
 ```
 
 ```{r}
@@ -159,17 +166,173 @@ ppc_rootogram(brazil_results$total_awards, samples$y_rep[1:50, ], prob = 0.8)
 ```
 Underpredicting: 1, 6; Overpredicting: 4
 
+```{r}
+y_rep_long <- as.data.frame(samples$y_rep[1:25, ]) |>
+  mutate(draw = row_number()) |>
+  pivot_longer(
+    cols = starts_with("V"), 
+    names_to = "i",
+    values_to = "y_rep"
+  ) |>
+  mutate(i = as.integer(gsub("V", "", i))) |>
+  mutate(year = i + 1982) |>
+  select(-i)
 
+y_rep_long
+```
+```{r}
+ggplot() +
+  geom_line(data = y_rep_long, aes(x = year, y = y_rep, group = draw),
+            color = "black", alpha = 0.1) +
+  geom_line(data = brazil_results, aes(x = year, y = total_awards), 
+            color = "blue", size = 1.2) +
+  labs(x = "Year", y = "Total Awards", title = "Posterior Predictive Check") +
+  theme_minimal()
+```
 
+```{r}
+rep_variances = apply(samples$y_rep[1:50, ], 1, var)
+obs_variance = var(brazil_results$total_awards)
+bayes_p_value = mean(rep_variances > obs_variance)
+bayes_p_value
+```
 
+BETA-BINOMIAL:
 
+```{r}
+brazil_bb <- stan_model("./brazil_beta_binomial.stan")
+```
 
+```{r}
+fit_bb = sampling(
+  brazil_bb,
+  data = list(N = nrow(brazil_results), y = brazil_results$total_awards),
+  chains = 1,
+  iter = 10000,
+  seed = 123
+)
+```
 
+```{r}
+print(fit_bb)
+```
+```{r}
+ci_limits <- data.frame(lower = numeric(), upper = numeric())
+ci_limits <- rbind(ci_limits, data.frame(lower = 0, upper = 0)) # Dummy first row
 
+for (i in 2:nrow(brazil_results)) {
+  N_train = i - 1
+  if (N_train == 1) {
+    ys = array(brazil_results$total_awards[1:N_train], dim = 1)
+  } else {
+    ys = brazil_results$total_awards[1:N_train]
+  }
+  
+  train_test_data = list(
+      N = N_train,
+      y = ys
+  )
+  
+  fit_cv = sampling(
+    brazil_bb,
+    data = train_test_data,
+    chains = 1,
+    iter = 10000,
+    refresh = 0, # To suppress running messages
+    seed = 123
+  )
+  
+  y_pred_samples = extract(fit_cv, pars="y_predict")$y_predict
+  limits = unname(quantile(y_pred_samples, probs = c(0.1, 0.9))) #80%
+  
+  ci_limits <- rbind(ci_limits, data.frame(lower = limits[1], upper = limits[2]))
+}
+```
 
+```{r}
+merged_df = brazil_results |> 
+  bind_cols(data.frame(CI_L = ci_limits[,1], CI_R = ci_limits[,2])) %>% 
+  mutate(Inside_CI = (total_awards >= CI_L & total_awards <= CI_R)) 
 
+bb_cv = merged_df[-1, ] %>% 
+  ggplot(aes(x = year, y = total_awards, ymin = CI_L, ymax = CI_R, color=Inside_CI)) +
+  geom_point() + 
+  geom_errorbar() +
+  theme_minimal() +
+  labs(x = "Year", y = "Total Awards")
 
+bb_cv
+```
 
+```{r}
+mcmc_trace(fit_bb, pars = c("kappa")) + theme_minimal()
+```
+```{r}
+mcmc_rank_hist(fit_bb, pars = c("kappa")) + theme_minimal()
+```
 
+```{r}
+samples_bb = extract(fit_bb)
+samples_bb_df = as.data.frame(samples_bb)
+```
 
+```{r}
+ggplot(data = samples_bb_df, aes(x = intercept, y = kappa)) +
+  geom_point(color = "steelblue", alpha = 0.25) +
+  labs(x = "Slope", y = "Intercept") +
+  theme_minimal()
+```
 
+```{r}
+ggplot(samples_bb_df, aes(x = slope)) +
+  geom_histogram(binwidth = 0.1, fill = "steelblue", color = "black") +
+  labs(x = "Slope", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(samples_bb_df, aes(x = intercept)) +
+  geom_histogram(binwidth = 0.05, fill = "steelblue", color = "black") +
+  labs(x = "Intercept", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+ppc_bars(brazil_results$total_awards, samples_bb$y_rep[1:50, ])
+```
+
+```{r}
+ppc_rootogram(brazil_results$total_awards, samples_bb$y_rep[1:50, ], prob = 0.8)
+```
+
+```{r}
+y_rep_long <- as.data.frame(samples_bb$y_rep[1:50, ]) |>
+  mutate(draw = row_number()) |>
+  pivot_longer(
+    cols = starts_with("V"), 
+    names_to = "i",
+    values_to = "y_rep"
+  ) |>
+  mutate(i = as.integer(gsub("V", "", i))) |>
+  mutate(year = i + 1982) |>
+  select(-i)
+
+y_rep_long
+```
+
+```{r}
+ggplot() +
+  geom_line(data = y_rep_long, aes(x = year, y = y_rep, group = draw),
+            color = "black", alpha = 0.1) +
+  geom_line(data = brazil_results, aes(x = year, y = total_awards), 
+            color = "blue", size = 1.2) +
+  labs(x = "Year", y = "Total Awards", title = "Posterior Predictive Check") +
+  theme_minimal()
+```
+
+```{r}
+rep_variances = apply(samples_bb$y_rep, 1, var)
+obs_variance = var(brazil_results$total_awards)
+bayes_p_value = mean(rep_variances > obs_variance)
+bayes_p_value
+```

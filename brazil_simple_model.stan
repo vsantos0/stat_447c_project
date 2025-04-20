@@ -11,7 +11,7 @@ parameters {
 model {
   slope ~ normal(0, 1);
   intercept ~ normal(0, 1);
-  
+
   for (i in 1:N) {
     y[i] ~ binomial(6, inv_logit(slope * (i / N) + intercept));
   }
